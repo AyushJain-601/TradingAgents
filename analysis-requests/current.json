@@ -1,0 +1,7 @@
+{
+  "ticker": "AAPL",
+  "analysis_date": "2026-09-04",
+  "model": "deepseek-v4-flash",
+  "dry_run": true,
+  "request_id": "chat-trigger-verification-20260906"
+}
