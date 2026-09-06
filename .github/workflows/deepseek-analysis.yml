@@ -1,0 +1,110 @@
+name: TradingAgents DeepSeek analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: 'Yahoo Finance ticker, e.g. RELIANCE.NS or AAPL'
+        required: true
+        type: string
+      analysis_date:
+        description: 'Analysis date (YYYY-MM-DD)'
+        required: true
+        type: string
+      model:
+        description: 'DeepSeek model for both reasoning and quick tasks'
+        required: true
+        default: deepseek-v4-flash
+        type: choice
+        options:
+          - deepseek-v4-flash
+          - deepseek-v4-pro
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deepseek-analysis
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install . socksio
+      - name: Run research analysis
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          ANALYSIS_TICKER: ${{ inputs.ticker }}
+          ANALYSIS_DATE: ${{ inputs.analysis_date }}
+          ANALYSIS_MODEL: ${{ inputs.model }}
+          LANGSMITH_TRACING: 'false'
+          LANGCHAIN_TRACING_V2: 'false'
+        run: |
+          python - <<'PY'
+          import contextlib
+          import datetime
+          import io
+          import os
+          import re
+          from pathlib import Path
+
+          key = os.environ.get('DEEPSEEK_API_KEY', '').strip()
+          if not key:
+              raise SystemExit('Missing repository secret: DEEPSEEK_API_KEY')
+          ticker = os.environ['ANALYSIS_TICKER'].strip().upper()
+          if not re.fullmatch(r'[A-Z0-9^][A-Z0-9.^=-]{0,29}', ticker):
+              raise SystemExit('Invalid ticker; use a Yahoo Finance symbol.')
+          day = os.environ['ANALYSIS_DATE'].strip()
+          if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', day):
+              raise SystemExit('Date must use YYYY-MM-DD.')
+          if datetime.date.fromisoformat(day) > datetime.datetime.now(datetime.timezone.utc).date():
+              raise SystemExit('Analysis date cannot be in the future.')
+          model = os.environ['ANALYSIS_MODEL']
+          if model not in {'deepseek-v4-flash', 'deepseek-v4-pro'}:
+              raise SystemExit('Unsupported model selection.')
+          from tradingagents.default_config import DEFAULT_CONFIG
+          from tradingagents.graph.trading_graph import TradingAgentsGraph
+
+          config = DEFAULT_CONFIG.copy()
+          config.update(llm_provider='deepseek', backend_url='https://api.deepseek.com',
+                        deep_think_llm=model, quick_think_llm=model,
+                        max_debate_rounds=1, max_risk_discuss_rounds=1,
+                        llm_max_retries=2, max_tokens=8192, checkpoint_enabled=False)
+          print(f'Starting {ticker} / {day} / {model}; API usage is billed by DeepSeek.', flush=True)
+          # Keep third-party console output and raw exceptions out of public logs.
+          try:
+              with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                  graph = TradingAgentsGraph(debug=False, config=config)
+                  state, decision = graph.propagate(ticker, day)
+          except Exception as exc:
+              raise SystemExit(f'Analysis failed ({type(exc).__name__}). Check credentials, balance, model access and data availability.') from None
+          sections = [f'# {ticker} — {day}', f'Model: {model}',
+                      'Research output; historical data coverage may be incomplete.',
+                      f'## Decision\n{decision}']
+          for field in ('market_report', 'sentiment_report', 'news_report',
+                        'fundamentals_report', 'investment_plan', 'trader_investment_plan',
+                        'final_trade_decision'):
+              if state.get(field):
+                  sections.append(f'## {field.replace("_", " ").title()}\n{state[field]}')
+          output = Path('analysis-output')
+          output.mkdir(exist_ok=True)
+          report = '\n\n'.join(sections).replace(key, '[REDACTED]')
+          (output / 'report.md').write_text(report, encoding='utf-8')
+          print('Analysis completed. Download the tradingagents-report artifact.')
+          PY
+      - name: Upload report only
+        uses: actions/upload-artifact@v4
+        with:
+          name: tradingagents-report
+          path: analysis-output/report.md
+          if-no-files-found: error
+          retention-days: 7
