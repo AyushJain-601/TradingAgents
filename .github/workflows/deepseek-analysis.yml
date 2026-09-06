@@ -1,6 +1,9 @@
 name: TradingAgents DeepSeek analysis
 
 on:
+  push:
+    branches: [main]
+    paths: ['analysis-requests/current.json']
   workflow_dispatch:
     inputs:
       ticker:
@@ -24,7 +27,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deepseek-analysis
+  group: deepseek-analysis-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -38,14 +41,56 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Resolve and validate request
+        id: request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TICKER: ${{ inputs.ticker }}
+          INPUT_DATE: ${{ inputs.analysis_date }}
+          INPUT_MODEL: ${{ inputs.model }}
+        run: |
+          python - <<'PY'
+          import datetime
+          import json
+          import os
+          import re
+          from pathlib import Path
+          if os.environ['EVENT_NAME'] == 'push':
+              request = json.loads(Path('analysis-requests/current.json').read_text())
+          else:
+              request = dict(ticker=os.environ['INPUT_TICKER'],
+                             analysis_date=os.environ['INPUT_DATE'],
+                             model=os.environ['INPUT_MODEL'])
+          dry_run = request.get('dry_run', False)
+          if type(dry_run) is not bool:
+              raise SystemExit('dry_run must be a JSON boolean')
+          ticker = request.get('ticker', '').strip().upper()
+          day = request.get('analysis_date', '').strip()
+          model = request.get('model', 'deepseek-v4-flash')
+          if not re.fullmatch(r'[A-Z0-9^][A-Z0-9.^=-]{0,29}', ticker):
+              raise SystemExit('Invalid ticker')
+          if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', day):
+              raise SystemExit('Date must use YYYY-MM-DD')
+          if datetime.date.fromisoformat(day) > datetime.datetime.now(datetime.timezone.utc).date():
+              raise SystemExit('Date cannot be in the future')
+          if model not in {'deepseek-v4-flash', 'deepseek-v4-pro'}:
+              raise SystemExit('Unsupported model')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for name, value in dict(ticker=ticker, day=day, model=model,
+                                      dry_run=str(dry_run).lower()).items():
+                  output.write(f'{name}={value}\n')
+          print('Request validated. ' + ('Dry run: no API calls.' if dry_run else 'Analysis enabled.'))
+          PY
       - name: Install dependencies
+        if: steps.request.outputs.dry_run != 'true'
         run: python -m pip install . socksio
       - name: Run research analysis
+        if: steps.request.outputs.dry_run != 'true'
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          ANALYSIS_TICKER: ${{ inputs.ticker }}
-          ANALYSIS_DATE: ${{ inputs.analysis_date }}
-          ANALYSIS_MODEL: ${{ inputs.model }}
+          ANALYSIS_TICKER: ${{ steps.request.outputs.ticker }}
+          ANALYSIS_DATE: ${{ steps.request.outputs.day }}
+          ANALYSIS_MODEL: ${{ steps.request.outputs.model }}
           LANGSMITH_TRACING: 'false'
           LANGCHAIN_TRACING_V2: 'false'
         run: |
@@ -102,6 +147,7 @@ jobs:
           print('Analysis completed. Download the tradingagents-report artifact.')
           PY
       - name: Upload report only
+        if: steps.request.outputs.dry_run != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: tradingagents-report
