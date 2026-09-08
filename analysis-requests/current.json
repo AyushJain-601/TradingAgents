@@ -1,7 +1,7 @@
 {
-  "ticker": "AAPL",
-  "analysis_date": "2026-09-04",
+  "ticker": "MTARTECH.NS",
+  "analysis_date": "2026-09-07",
   "model": "deepseek-v4-flash",
-  "dry_run": true,
-  "request_id": "chat-trigger-verification-20260906"
+  "dry_run": false,
+  "request_id": "mtartech-system-audit-20260908"
 }
