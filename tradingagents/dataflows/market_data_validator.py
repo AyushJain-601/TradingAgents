@@ -15,6 +15,7 @@ from collections.abc import Iterable
 import pandas as pd
 from stockstats import wrap
 
+from tradingagents.audit import observe
 from tradingagents.dataflows.stockstats_utils import load_ohlcv
 
 # A fixed, common indicator set so the snapshot is the same shape every run.
@@ -59,6 +60,7 @@ def _fmt(value) -> str:
     return str(value)
 
 
+@observe("direct.verified_market_snapshot")
 def build_verified_market_snapshot(
     symbol: str,
     curr_date: str,

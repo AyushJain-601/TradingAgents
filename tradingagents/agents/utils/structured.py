@@ -70,6 +70,7 @@ def invoke_structured_or_freetext(
     shape). The same value is forwarded to the free-text path so the
     fallback sees the same input the structured call did.
     """
+    from tradingagents.audit import event
     if structured_llm is not None:
         try:
             result = structured_llm.invoke(prompt)
@@ -78,12 +79,18 @@ def invoke_structured_or_freetext(
                 # the tool, leaving the parser with nothing to return. Treat it
                 # as a structured miss and fall back, with a clear reason.
                 raise ValueError("structured output returned no parsed result")
-            return render(result)
+            rendered = render(result)
+            event("structured.success", agent=agent_name, rendered=rendered)
+            return rendered
         except Exception as exc:
+            event("structured.fallback", agent=agent_name,
+                  error_type=type(exc).__name__, error=str(exc))
             logger.warning(
                 "%s: structured-output invocation failed (%s); retrying once as free text",
                 agent_name, exc,
             )
 
+    if structured_llm is None:
+        event("structured.unavailable", agent=agent_name)
     response = plain_llm.invoke(prompt)
     return response.content

@@ -525,6 +525,8 @@ class TradingAgentsGraph:
             instrument_context=instrument_context,
         )
         args = self.propagator.get_graph_args()
+        if self.config.get("audit_trace_enabled") and self.callbacks:
+            args.setdefault("config", {})["callbacks"] = self.callbacks
 
         # Inject the checkpoint thread_id (from checkpoint_scope) so the same
         # ticker+date+graph-shape resumes; a different one starts fresh (#1089).

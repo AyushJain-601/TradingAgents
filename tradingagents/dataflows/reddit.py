@@ -31,6 +31,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from tradingagents.audit import observe
+
 from .date_window import in_window
 from .symbol_utils import crypto_base
 
@@ -244,6 +246,7 @@ def _fetch_subreddit(
     return _fetch_subreddit_rss(ticker, sub, limit, timeout)
 
 
+@observe("direct.reddit")
 def fetch_reddit_posts(
     ticker: str,
     subreddits: Iterable[str] = DEFAULT_SUBREDDITS,

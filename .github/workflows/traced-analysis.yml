@@ -1,0 +1,40 @@
+name: Secret-redacted MTARTECH trace
+on:
+  push:
+    branches: [codex/mtartech-secret-redacted-trace]
+    paths: [analysis-requests/trace.json]
+permissions:
+  contents: read
+concurrency:
+  group: mtartech-trace
+  cancel-in-progress: false
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install
+        run: python -m pip install '.[dev]' socksio
+      - name: Synthetic safety and integration tests
+        run: python -m pytest tests/test_audit_trace.py tests/test_audit_integration.py -q
+      - name: Traced analysis
+        id: analysis
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          LANGSMITH_TRACING: 'false'
+          LANGCHAIN_TRACING_V2: 'false'
+        run: python scripts/run_traced_analysis.py
+      - name: Upload sanitized evidence
+        if: always() && steps.analysis.outputs.artifact_ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mtartech-sanitized-trace
+          path: trace-output/
+          retention-days: 1
+          if-no-files-found: error
